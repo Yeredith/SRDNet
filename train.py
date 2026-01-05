@@ -6,11 +6,13 @@ from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 import time
+import numpy as np
+import torch.nn as nn
 
 from loss import HybridLoss ,HFL
-from torchnet import meter
 from data_utils import TrainsetFromFolder, ValsetFromFolder
 from eval import PSNR
+from option import opt
 
 from torch.optim.lr_scheduler import MultiStepLR
 from architecture.common import *
@@ -18,8 +20,10 @@ from architecture.SRDNet import SRDNet
 import torch.nn.init as init
 import scipy.io as scio
 
+
 psnr = []
-out_path = 'result/' + opt.datasetName + '/'
+out_path = os.path.join('result', opt.datasetName)
+os.makedirs(out_path, exist_ok=True)
 
 log_interval = 50
 per_epoch_iteration = 10
@@ -64,11 +68,11 @@ def main():
         torch.cuda.manual_seed(opt.seed)
     cudnn.benchmark = True
 
-    train_set = TrainsetFromFolder('dataset/trains/' + opt.datasetName + '/' + str(opt.upscale_factor) + '/')
+    train_set = TrainsetFromFolder('C:\\Users\\yered\\OneDrive\\Documentos\\REDES SR\\SRDNet\\CAVE\\datasets\\trains\\' + opt.datasetName + '/' + str(opt.upscale_factor) + '/')
     train_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=True)
-    val_set = ValsetFromFolder('dataset/evals/' + opt.datasetName + '/' + str(opt.upscale_factor) + '/')
+    val_set = ValsetFromFolder('C:\\Users\\yered\\OneDrive\\Documentos\\REDES SR\\SRDNet\\CAVE\\datasets\\tests\\' + opt.datasetName + '/' + str(opt.upscale_factor) + '/')
     val_loader = DataLoader(dataset=val_set, num_workers=opt.threads, batch_size=1, shuffle=False)
- 
+    
     model = SRDNet(opt)
 
     criterion = nn.L1Loss()
@@ -109,7 +113,11 @@ def main():
     scheduler = MultiStepLR(optimizer, milestones=[35, 70, 105,140,175], gamma=0.5, last_epoch=-1)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,opt.nEpochs,eta_min=2e-5)
 
-    writer = SummaryWriter(log_dir='logs/' + opt.datasetName + opt.method+ '_' + str(time.ctime()))
+    # Create a filesystem-safe timestamp for Windows (no spaces or colons)
+    safe_ts = time.strftime("%Y%m%d_%H%M%S")
+    logdir = os.path.join('logs', f"{opt.datasetName}{opt.method}_{safe_ts}")
+    os.makedirs(logdir, exist_ok=True)
+    writer = SummaryWriter(log_dir=logdir)
     # Training
     for epoch in range(opt.start_epoch, opt.nEpochs + 1):
         print("Epoch = {}, lr = {}".format(epoch, optimizer.param_groups[0]["lr"]))
@@ -122,54 +130,63 @@ def main():
     scio.savemat(out_path + 'LFF1GRL0.mat', {'psnr': psnr})  # , 'ssim':ssim, 'sam':sam})
     # scio.savemat(out_path + opt.datasetName + opt.method+'LFF1GRL0.txt', {'psnr': psnr})  # , 'ssim':ssim, 'sam':sam})
 nearest = nn.Upsample(scale_factor=opt.upscale_factor, mode='nearest')
-def train(train_loader, optimizer, model, criterion, epoch,HFL_loss):
-# def train(train_loader, optimizer, model, criterion, epoch, HFL_loss):
+
+def train(train_loader, optimizer, model, criterion, epoch, HFL_loss):
+    model.train()
     for iteration, batch in enumerate(train_loader, 1):
-        input, label = Variable(batch[0]), Variable(batch[1], requires_grad=False)
-        lms = nearest(input)
+        input, label = batch[0], batch[1]
+        # move to device
         if opt.cuda:
             input = input.cuda()
             label = label.cuda()
-            lms =  lms.cuda()
 
-        train_loss = []
+        lms = nearest(input)
+
         SR = model(input)
 
-        HFL_loss = HFL_loss(SR, label)
-        loss = criterion(SR, label)
-        loss = loss+0.1*HFL_loss
+        hfl_val = HFL_loss(SR, label)
+        loss = criterion(SR, label) + 0.1 * hfl_val
 
         optimizer.zero_grad()
         loss.backward()
-        train_loss.append(loss)
-
         optimizer.step()
-        if (iteration + log_interval) % log_interval == 0:
+
+        if iteration % log_interval == 0:
             print("===> Epoch[{}]({}/{}): Loss: {:.10f}".format(epoch, iteration, len(train_loader), loss.item()))
-          
-        writer.add_scalar('scalar/train_loass', loss,epoch)
+        writer.add_scalar('train/loss', loss.item(), (epoch - 1) * len(train_loader) + iteration)
     
 def val(val_loader, model, epoch):
-
     model.eval()
-    val_psnr = 0
-    epoch_meter = meter.AverageValueMeter()
-    epoch_meter.reset()
+    val_psnr = 0.0
     with torch.no_grad():
         for iteration, batch in enumerate(val_loader, 1):
-            input, HR = Variable(batch[0], volatile=True), Variable(batch[1])
-            lms=nearest(input)
+            input, HR = batch[0], batch[1]
             if opt.cuda:
                 input = input.cuda()
-                lms = lms.cuda()
+                HR = HR.cuda()
+
             SR = model(input)
-            val_psnr += PSNR(SR.cpu().detach().numpy(), HR.detach().numpy())
+
+            # Convert to numpy arrays with shape (H, W, C)
+            sr_np = SR.cpu().numpy()
+            hr_np = HR.cpu().numpy()
+            # remove batch dimension
+            if sr_np.ndim == 4:
+                sr_np = sr_np[0]
+            if hr_np.ndim == 4:
+                hr_np = hr_np[0]
+
+            # currently sr_np is (C, H, W) -> transpose to (H, W, C)
+            sr_np = np.transpose(sr_np, (1, 2, 0))
+            hr_np = np.transpose(hr_np, (1, 2, 0))
+
+            val_psnr += PSNR(sr_np, hr_np)
 
         val_psnr = val_psnr / len(val_loader)
         print("PSNR = {:.3f}".format(val_psnr))
 
     psnr.append(val_psnr)
-    writer.add_scalar('Val/PSNR',  val_psnr, epoch)
+    writer.add_scalar('val/psnr', val_psnr, epoch)
 def save_checkpoint(epoch, model, optimizer):
     model_out_path = "checkpoint/" + "{}_model_{}_epoch_{}.pth".format(opt.datasetName, opt.upscale_factor, epoch)
     state = {"epoch": epoch, "model": model.state_dict(), "optimizer": optimizer.state_dict()}

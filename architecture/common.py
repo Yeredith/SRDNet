@@ -88,6 +88,7 @@ class TreeDBlock(nn.Module):
             self.temperature_1 = 0.05
             self.temperature_2 = 0.05
 
+        device = x.device
         if (self.fea_num > 1):
             x = torch.cat(x, dim=1)  # [fea_num B C H W]
 
@@ -97,8 +98,8 @@ class TreeDBlock(nn.Module):
             feat_weight = feat_weight[None, :, None, None, None]
             # p shape[fea_num 1 1 1 1]
             # noise r1 r2
-            noise_feat_r1 = torch.rand((B, self.fea_num * 64))[:, :, None, None, None].cuda()  ##[dence_num,N,1,1,1,1]
-            noise_feat_r2 = torch.rand((B, self.fea_num * 64))[:, :, None, None, None].cuda()
+            noise_feat_r1 = torch.rand((B, self.fea_num * 64), device=device)[:, :, None, None, None]
+            noise_feat_r2 = torch.rand((B, self.fea_num * 64), device=device)[:, :, None, None, None]
             noise_feat_logits = torch.log(torch.log(noise_feat_r1) / torch.log(noise_feat_r2))
             feat_weight_soft = torch.sigmoid(
                 (torch.log(feat_weight / (1 - feat_weight)) + noise_feat_logits) / self.temperature_1)
@@ -117,16 +118,16 @@ class TreeDBlock(nn.Module):
         [B, L, C, H, W] = x.shape
 
         # s2
-        noise_component_r1 = torch.rand((B, self.component_num))[:, :, None, None, None].cuda()  ##[dence_num,N,1,1,1,1]
-        noise_component_r2 = torch.rand((B, self.component_num))[:, :, None, None, None].cuda()
+        noise_component_r1 = torch.rand((B, self.component_num), device=device)[:, :, None, None, None]
+        noise_component_r2 = torch.rand((B, self.component_num), device=device)[:, :, None, None, None]
         noise_component_logits1 = torch.log(torch.log(noise_component_r1) / torch.log(noise_component_r2))
         component_weight_gumbel1 = torch.sigmoid(
             (torch.log(component_weight1 / (1 - component_weight1)) + noise_component_logits1) / self.temperature_2)
         logits2 = component_weight_gumbel1
 
         # s3
-        noise_component_r3 = torch.rand((B, self.component_num))[:, :, None, None, None].cuda()  ##[dence_num,N,1,1,1,1]
-        noise_component_r4 = torch.rand((B, self.component_num))[:, :, None, None, None].cuda()
+        noise_component_r3 = torch.rand((B, self.component_num), device=device)[:, :, None, None, None]
+        noise_component_r4 = torch.rand((B, self.component_num), device=device)[:, :, None, None, None]
         noise_component_logits2 = torch.log(torch.log(noise_component_r3) / torch.log(noise_component_r4))
         component_weight_gumbel2 = torch.sigmoid(
             (torch.log(component_weight2 / (1 - component_weight2)) + noise_component_logits2) / self.temperature_2)

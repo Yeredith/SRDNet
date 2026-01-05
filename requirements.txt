@@ -1,0 +1,10 @@
+numpy
+scipy
+scikit-image
+tensorboardX
+torchnet
+h5py
+matplotlib
+
+# Nota: PyTorch normalmente se instala desde conda (dependiendo de CUDA).
+# No se incluye aquí porque la versión depende de tu GPU/CUDA.
